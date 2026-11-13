@@ -153,6 +153,60 @@ enum UnaryOp {
     IsFinite,
     IsInteger,
     IsNan,
+    RoundEven,
+    RoundAway,
+    Rint,
+    NearbyInt,
+    InverseSquare,
+    InverseCube,
+    Acsc,
+    Asec,
+    Acot,
+    Acsch,
+    Asech,
+    Acoth,
+    NextUp,
+    NextDown,
+    Ulp,
+    Ilogb,
+    IsNormal,
+    IsSubnormal,
+    IsInfinite,
+    IsSignPositive,
+    IsSignNegative,
+    IsComposite,
+    IsPrimePower,
+    SmallestPrimeFactor,
+    LargestPrimeFactor,
+    Omega,
+    BigOmega,
+    IsAbundant,
+    IsDeficient,
+    Subfactorial,
+    Superfactorial,
+    Hyperfactorial,
+    BitNot,
+    CountOnes,
+    CountZeros,
+    LeadingZeros,
+    TrailingZeros,
+    ReverseBits,
+    ByteSwap,
+    AiryAi,
+    AiryBi,
+    Dawson,
+    Expint,
+    BesselI0,
+    BesselI1,
+    BesselK0,
+    BesselK1,
+    OneMinus,
+    Frac,
+    Rsqrt,
+    IsPositive,
+    IsNegative,
+    IsZero,
+    Log1pmx,
 }
 
 #[derive(Clone, Copy)]
@@ -219,6 +273,47 @@ enum BinaryOp {
     JacobiSymbol,
     KroneckerSymbol,
     RoundTo,
+    Fmod,
+    Remainder,
+    Quotient,
+    IntegerRoot,
+    SignedPow,
+    SmallestCommonMultiple,
+    Binomial,
+    Choose,
+    Permute,
+    LogAddExp2,
+    LogSubExp,
+    HurwitzZeta,
+    IncompleteGamma,
+    RegularizedGammaP,
+    RegularizedGammaQ,
+    ShiftLeft,
+    ShiftRight,
+    RotateLeft,
+    RotateRight,
+    BitTest,
+    SetBit,
+    ClearBit,
+    Equal,
+    NotEqual,
+    LessThan,
+    GreaterThan,
+    LessEqual,
+    GreaterEqual,
+    ExponentialPdf,
+    ExponentialCdf,
+    PoissonPmf,
+    PoissonCdf,
+    StudentTPdf,
+    StudentTCdf,
+    ChiSquaredPdf,
+    ChiSquaredCdf,
+    DivRemQuotient,
+    DivRemRemainder,
+    ExtendedGcdGcd,
+    ExtendedGcdX,
+    ExtendedGcdY,
 }
 
 type CachedUnaryResults = Arc<[(f64, UnaryOp)]>;
@@ -240,12 +335,66 @@ enum TernaryOp {
     Smoothstep,
     ModularPower,
     BinomialCdf,
+    Fma,
+    MulAdd,
+    Median3,
+    Hypot3,
+    InverseLerp,
+    IsBetween,
+    BinomialPmf,
+    BetaInc,
+    RegularizedBeta,
+    ModularAdd,
+    ModularSub,
+    ModularMul,
+    Multinomial,
+    GammaPdf,
+    GammaCdf,
+    BetaPdf,
+    BetaCdf,
+    UniformPdf,
+    UniformCdf,
 }
 
 #[derive(Clone, Copy)]
 enum QuaternaryOp {
     ChineseRemainder,
+    Bilinear,
+    Multilinear,
+    CubicInterp,
 }
+
+#[derive(Clone, Copy)]
+enum QuinaryOp {
+    Remap,
+}
+
+#[derive(Clone, Copy)]
+enum ComplexUnaryOp {
+    Conjugate,
+    Real,
+    Imaginary,
+    Argument,
+    Norm,
+    Phase,
+    Exp,
+    Ln,
+    Sqrt,
+    Sin,
+    Cos,
+    Tan,
+}
+
+#[derive(Clone, Copy)]
+enum ComplexBinaryOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Power,
+    Logarithm,
+}
+
 #[derive(Clone, Copy)]
 enum ExprNode {
     Number {
@@ -262,11 +411,15 @@ enum ExprNode {
     Binary(BinaryOp, usize, usize),
     Ternary(TernaryOp, usize, usize, usize),
     Quaternary(QuaternaryOp, usize, usize, usize, usize),
+    Quinary(QuinaryOp, usize, usize, usize, usize, usize),
+    ComplexUnary(ComplexUnaryOp, usize),
+    ComplexBinary(ComplexBinaryOp, usize, usize),
 }
 
 #[derive(Clone, Copy)]
 struct Candidate {
     value: f64,
+    imag: f64,
     node_id: usize,
     score: f64,
     rank_score: f64,
@@ -274,7 +427,7 @@ struct Candidate {
 
 struct Cell {
     candidates: Vec<Candidate>,
-    seen: HashSet<u64>,
+    seen: HashSet<(u64, u64)>,
     worst_heap: BinaryHeap<(u64, usize, u64)>,
     versions: Vec<u64>,
     bucket_indices: HashMap<i32, usize>,
@@ -316,18 +469,149 @@ impl Cell {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Complex {
+    re: f64,
+    im: f64,
+}
+
+impl Complex {
+    #[inline]
+    fn new(re: f64, im: f64) -> Self {
+        Self { re, im }
+    }
+
+    #[inline]
+    fn magnitude(self) -> f64 {
+        self.re.hypot(self.im)
+    }
+
+    #[inline]
+    fn is_finite(self) -> bool {
+        self.re.is_finite() && self.im.is_finite()
+    }
+
+    #[inline]
+    fn exp(self) -> Self {
+        let scale = self.re.exp();
+        Self::new(scale * self.im.cos(), scale * self.im.sin())
+    }
+
+    #[inline]
+    fn ln(self) -> Option<Self> {
+        let magnitude = self.magnitude();
+        if magnitude == 0.0 || !magnitude.is_finite() {
+            None
+        } else {
+            Some(Self::new(magnitude.ln(), self.im.atan2(self.re)))
+        }
+    }
+
+    #[inline]
+    fn sqrt(self) -> Self {
+        if self.im == 0.0 {
+            if self.re >= 0.0 {
+                return Self::new(self.re.sqrt(), 0.0);
+            }
+            return Self::new(0.0, (-self.re).sqrt());
+        }
+        let magnitude = self.magnitude();
+        let re = ((magnitude + self.re) * 0.5).max(0.0).sqrt();
+        let im = ((magnitude - self.re) * 0.5).max(0.0).sqrt().copysign(self.im);
+        Self::new(re, im)
+    }
+
+    #[inline]
+    fn sin(self) -> Self {
+        Self::new(self.re.sin() * self.im.cosh(), self.re.cos() * self.im.sinh())
+    }
+
+    #[inline]
+    fn cos(self) -> Self {
+        Self::new(self.re.cos() * self.im.cosh(), -self.re.sin() * self.im.sinh())
+    }
+
+    #[inline]
+    fn tan(self) -> Option<Self> {
+        self.sin().div(self.cos())
+    }
+
+    #[inline]
+    fn div(self, rhs: Self) -> Option<Self> {
+        if rhs.re == 0.0 && rhs.im == 0.0 {
+            return None;
+        }
+        let scale = rhs.re.abs().max(rhs.im.abs());
+        if scale == 0.0 || !scale.is_finite() {
+            return None;
+        }
+        let c = rhs.re / scale;
+        let d = rhs.im / scale;
+        let denominator = c * c + d * d;
+        let a = self.re / scale;
+        let b = self.im / scale;
+        Some(Self::new((a * c + b * d) / denominator, (b * c - a * d) / denominator))
+    }
+
+    #[inline]
+    fn pow(self, exponent: Self) -> Option<Self> {
+        if self.re == 0.0 && self.im == 0.0 {
+            if exponent.im == 0.0 && exponent.re > 0.0 {
+                return Some(Self::new(0.0, 0.0));
+            }
+            return None;
+        }
+        let logarithm = self.ln()?;
+        Some(Complex::new(
+            exponent.re * logarithm.re - exponent.im * logarithm.im,
+            exponent.re * logarithm.im + exponent.im * logarithm.re,
+        ).exp())
+    }
+}
+
+#[inline]
+fn complex_key(re: f64, im: f64) -> (u64, u64) {
+    let re = if re == 0.0 { 0.0 } else { re };
+    let im = if im == 0.0 { 0.0 } else { im };
+    (re.to_bits(), im.to_bits())
+}
+
+#[inline]
+fn complex_display(re: f64, im: f64) -> String {
+    if im == 0.0 {
+        return format!("{re:.15}");
+    }
+    if re == 0.0 {
+        return format!("{im:.15}i");
+    }
+    if im < 0.0 {
+        format!("{re:.15} - {:.15}i", im.abs())
+    } else {
+        format!("{re:.15} + {im:.15}i")
+    }
+}
+
 #[inline]
 fn long_beam_rank(value: f64, target: f64) -> f64 {
     ((value.abs() + 1.0).ln() - (target.abs() + 1.0).ln()).abs()
 }
 
 #[inline]
-fn long_beam_bucket(value: f64) -> i32 {
-    if value == 0.0 {
+fn long_beam_bucket(value: f64, imag: f64) -> i32 {
+    if value == 0.0 && imag == 0.0 {
         return i32::MIN;
     }
-    let exponent = value.abs().log10().floor() as i32;
-    exponent.saturating_mul(2) + (value.is_sign_negative() as i32)
+    let magnitude = value.hypot(imag);
+    let exponent = magnitude.log10().floor() as i32;
+    if imag == 0.0 {
+        exponent.saturating_mul(4) + if value.is_sign_negative() { 2 } else { 0 }
+    } else {
+        let quadrant = if value >= 0.0 && imag >= 0.0 { 0 }
+            else if value < 0.0 && imag >= 0.0 { 1 }
+            else if value < 0.0 && imag < 0.0 { 2 }
+            else { 3 };
+        exponent.saturating_mul(4) + quadrant
+    }
 }
 
 fn insert_into_cell(
@@ -348,24 +632,52 @@ fn insert_into_cell_with_base(
     node: ExprNode,
     node_base: usize,
 ) -> Option<f64> {
-    if !value.is_finite() || value.abs() > MAX_ABS_VALUE {
+    insert_complex_into_cell_with_base(cell, nodes, target, value, 0.0, node, node_base)
+}
+
+fn insert_complex_into_cell(
+    cell: &mut Cell,
+    nodes: &mut Vec<ExprNode>,
+    target: f64,
+    value: Complex,
+    node: ExprNode,
+) -> Option<f64> {
+    insert_complex_into_cell_with_base(cell, nodes, target, value.re, value.im, node, 0)
+}
+
+fn insert_complex_into_cell_with_base(
+    cell: &mut Cell,
+    nodes: &mut Vec<ExprNode>,
+    target: f64,
+    value: f64,
+    imag: f64,
+    node: ExprNode,
+    node_base: usize,
+) -> Option<f64> {
+    if !value.is_finite() || !imag.is_finite() || value.hypot(imag) > MAX_ABS_VALUE {
         return None;
     }
 
     let value = if value == 0.0 { 0.0 } else { value };
-    let key = value.to_bits();
-    let score = (value - target).abs();
-    let rank_score = if cell.diverse { long_beam_rank(value, target) } else { score };
+    let imag = if imag == 0.0 { 0.0 } else { imag };
+    let key = complex_key(value, imag);
+    let score = (value - target).hypot(imag);
+    let rank_score = if cell.diverse {
+        let magnitude = value.hypot(imag);
+        ((magnitude + 1.0).ln() - (target.abs() + 1.0).ln()).abs()
+    } else {
+        score
+    };
 
     if !cell.diverse && cell.limit <= 16 {
-        if cell.candidates.iter().any(|candidate| candidate.value.to_bits() == key) {
+        if cell.candidates.iter().any(|candidate| complex_key(candidate.value, candidate.imag) == key) {
             return None;
         }
 
         if cell.candidates.len() < cell.limit {
             let node_id = node_base + nodes.len();
             nodes.push(node);
-            cell.candidates.push(Candidate { value, node_id, score, rank_score });
+            cell.candidates.push(Candidate { value, imag, node_id, score, rank_score });
             return Some(score);
         }
 
@@ -380,7 +692,7 @@ fn insert_into_cell_with_base(
         let local_node_id = cell.candidates[index].node_id.checked_sub(node_base)?;
         nodes[local_node_id] = node;
         let node_id = node_base + local_node_id;
-        cell.candidates[index] = Candidate { value, node_id, score, rank_score };
+        cell.candidates[index] = Candidate { value, imag, node_id, score, rank_score };
         return Some(score);
     }
 
@@ -400,18 +712,18 @@ fn insert_into_cell_with_base(
     }
 
     if cell.diverse {
-        let bucket = long_beam_bucket(value);
+        let bucket = long_beam_bucket(value, imag);
         if let Some(index) = cell.bucket_indices.get(&bucket).copied() {
             if rank_score >= cell.candidates[index].rank_score {
                 return None;
             }
-            let old_key = cell.candidates[index].value.to_bits();
+            let old_key = complex_key(cell.candidates[index].value, cell.candidates[index].imag);
             let local_node_id = cell.candidates[index].node_id.checked_sub(node_base)?;
             nodes[local_node_id] = node;
             let node_id = node_base + local_node_id;
             cell.seen.remove(&old_key);
             cell.seen.insert(key);
-            cell.candidates[index] = Candidate { value, node_id, score, rank_score };
+            cell.candidates[index] = Candidate { value, imag, node_id, score, rank_score };
             cell.versions[index] = cell.versions[index].wrapping_add(1);
             cell.worst_heap.push((rank_score.to_bits(), index, cell.versions[index]));
             return Some(score);
@@ -423,11 +735,10 @@ fn insert_into_cell_with_base(
         nodes.push(node);
         let index = cell.candidates.len();
         cell.seen.insert(key);
-        cell.candidates.push(Candidate { value, node_id, score, rank_score });
+        cell.candidates.push(Candidate { value, imag, node_id, score, rank_score });
         cell.versions.push(0);
         if cell.diverse {
-            cell.bucket_indices
-                .insert(long_beam_bucket(value), index);
+            cell.bucket_indices.insert(long_beam_bucket(value, imag), index);
         }
         cell.worst_heap.push((rank_score.to_bits(), index, 0));
         return Some(score);
@@ -438,7 +749,7 @@ fn insert_into_cell_with_base(
         return None;
     }
 
-    let old_key = cell.candidates[index].value.to_bits();
+    let old_key = complex_key(cell.candidates[index].value, cell.candidates[index].imag);
     let local_node_id = cell.candidates[index].node_id.checked_sub(node_base)?;
     nodes[local_node_id] = node;
     let node_id = node_base + local_node_id;
@@ -446,10 +757,10 @@ fn insert_into_cell_with_base(
     cell.seen.remove(&old_key);
     cell.seen.insert(key);
     if cell.diverse {
-        cell.bucket_indices.remove(&long_beam_bucket(cell.candidates[index].value));
-        cell.bucket_indices.insert(long_beam_bucket(value), index);
+        cell.bucket_indices.remove(&long_beam_bucket(cell.candidates[index].value, cell.candidates[index].imag));
+        cell.bucket_indices.insert(long_beam_bucket(value, imag), index);
     }
-    cell.candidates[index] = Candidate { value, node_id, score, rank_score };
+    cell.candidates[index] = Candidate { value, imag, node_id, score, rank_score };
     cell.versions[index] = cell.versions[index].wrapping_add(1);
     cell.worst_heap.push((rank_score.to_bits(), index, cell.versions[index]));
     Some(score)
@@ -1128,6 +1439,22 @@ fn next_after_value(a: f64, b: f64) -> f64 {
 }
 
 #[inline]
+fn extended_gcd_values(a: f64, b: f64) -> Option<(f64, f64, f64)> {
+    let a = integer_argument(a)? as i128;
+    let b = integer_argument(b)? as i128;
+    let (mut old_r, mut r) = (a, b);
+    let (mut old_s, mut s) = (1_i128, 0_i128);
+    let (mut old_t, mut t) = (0_i128, 1_i128);
+    while r != 0 {
+        let q = old_r / r;
+        (old_r, r) = (r, old_r - q * r);
+        (old_s, s) = (s, old_s - q * s);
+        (old_t, t) = (t, old_t - q * t);
+    }
+    if old_r < 0 { old_r = -old_r; old_s = -old_s; old_t = -old_t; }
+    Some((old_r as f64, old_s as f64, old_t as f64))
+}
+
 fn modular_inverse_value(a: f64, modulus: f64) -> Option<f64> {
     let a = integer_argument(a)? as i128;
     let modulus = integer_argument(modulus)? as i128;
@@ -1828,6 +2155,11 @@ fn clamp_value(x: f64, lo: f64, hi: f64) -> Option<f64> {
 
 fn lerp_value(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
 
+fn remap_value(x: f64, in_min: f64, in_max: f64, out_min: f64, out_max: f64) -> Option<f64> {
+    if !in_min.is_finite() || !in_max.is_finite() || in_min == in_max { return None; }
+    Some(out_min + (x - in_min) * (out_max - out_min) / (in_max - in_min))
+}
+
 fn smoothstep_value(edge0: f64, edge1: f64, x: f64) -> Option<f64> {
     if edge0 == edge1 { return None; }
     let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
@@ -1840,6 +2172,16 @@ fn modular_power_value(a: f64, b: f64, m: f64) -> Option<f64> {
     let m = integer_argument(m)?;
     if b < 0 || m <= 0 || m > 1_000_000_000_000 { return None; }
     Some(modular_pow_u64(a.rem_euclid(m) as u64, b as u64, m as u64)? as f64)
+}
+
+fn binomial_pmf_value(n: f64, k: f64, p: f64) -> Option<f64> {
+    let n = integer_argument(n)?;
+    let k = integer_argument(k)?;
+    if n < 0 || n > 500 || k < 0 || k > n || !p.is_finite() || !(0.0..=1.0).contains(&p) { return None; }
+    if p == 0.0 { return Some(if k == 0 { 1.0 } else { 0.0 }); }
+    if p == 1.0 { return Some(if k == n { 1.0 } else { 0.0 }); }
+    let combination = combinations(n as f64, k as f64)?;
+    Some(combination * p.powi(k as i32) * (1.0 - p).powi((n - k) as i32))
 }
 
 fn binomial_cdf_value(n: f64, k: f64, p: f64) -> Option<f64> {
@@ -1881,6 +2223,406 @@ fn chinese_remainder_value(a: f64, m: f64, b: f64, n: f64) -> Option<f64> {
     (result.abs() <= MAX_ABS_VALUE as i128).then_some(result as f64)
 }
 
+fn round_ties_even(value: f64) -> f64 {
+    if !value.is_finite() || value.abs() >= 4.5e15 { return value; }
+    let lower = value.floor();
+    let fraction = value - lower;
+    if fraction < 0.5 { lower }
+    else if fraction > 0.5 { lower + 1.0 }
+    else if (lower as i64) & 1 == 0 { lower }
+    else { lower + 1.0 }
+}
+
+fn ilogb_value(value: f64) -> Option<f64> {
+    if value == 0.0 || !value.is_finite() { return None; }
+    let bits = value.abs().to_bits();
+    let exponent = ((bits >> 52) & 0x7ff) as i32;
+    if exponent != 0 {
+        Some((exponent - 1023) as f64)
+    } else {
+        let mantissa = bits & ((1_u64 << 52) - 1);
+        Some((63 - mantissa.leading_zeros() as i32 - 1074) as f64)
+    }
+}
+
+fn ulp_value(value: f64) -> Option<f64> {
+    if !value.is_finite() { return None; }
+    let x = value.abs();
+    let next = next_after_value(x, f64::INFINITY);
+    let result = next - x;
+    let result = if result.is_finite() { result } else { x - next_after_value(x, f64::NEG_INFINITY) };
+    result.is_finite().then_some(result)
+}
+
+fn prime_factor_summary(value: f64) -> Option<(u64, u64, u64, u64)> {
+    let n = integer_argument(value)?;
+    if n < 2 || n > 10_000_000 { return None; }
+    let mut remaining = n as u64;
+    let mut smallest = 0_u64;
+    let mut largest = 0_u64;
+    let mut distinct = 0_u64;
+    let mut total = 0_u64;
+    let mut p = 2_u64;
+    while p <= remaining / p {
+        if remaining % p == 0 {
+            if smallest == 0 { smallest = p; }
+            largest = p;
+            distinct += 1;
+            while remaining % p == 0 {
+                remaining /= p;
+                total += 1;
+            }
+        }
+        p += if p == 2 { 1 } else { 2 };
+    }
+    if remaining > 1 {
+        if smallest == 0 { smallest = remaining; }
+        largest = remaining;
+        distinct += 1;
+        total += 1;
+    }
+    Some((smallest, largest, distinct, total))
+}
+
+fn is_abundant_or_deficient(value: f64) -> Option<(f64, f64)> {
+    let n = integer_argument(value)?;
+    if n < 1 || n > 100_000 { return None; }
+    let proper = aliquot_sum_value(value)?;
+    Some((if proper > n as f64 { 1.0 } else { 0.0 }, if proper < n as f64 { 1.0 } else { 0.0 }))
+}
+
+fn superfactorial_value(value: f64) -> Option<f64> {
+    let n = integer_argument(value)?;
+    if !(0..=10).contains(&n) { return None; }
+    let mut result = 1.0;
+    let mut factorial_value = 1.0;
+    for k in 1..=n {
+        factorial_value *= k as f64;
+        result *= factorial_value;
+        if !result.is_finite() || result > MAX_ABS_VALUE { return None; }
+    }
+    Some(result)
+}
+
+fn hyperfactorial_value(value: f64) -> Option<f64> {
+    let n = integer_argument(value)?;
+    if !(0..=10).contains(&n) { return None; }
+    let mut result = 1.0;
+    for k in 1..=n {
+        result *= (k as f64).powi(k as i32);
+        if !result.is_finite() || result > MAX_ABS_VALUE { return None; }
+    }
+    Some(result)
+}
+
+fn airy_series(x: f64, y0: f64, y1: f64) -> Option<f64> {
+    if !x.is_finite() || x.abs() > 7.0 { return None; }
+    let mut coefficients = [0.0_f64; 64];
+    coefficients[0] = y0;
+    coefficients[1] = y1;
+    for n in 1..62 {
+        coefficients[n + 2] = coefficients[n - 1] / ((n + 2) * (n + 1)) as f64;
+    }
+    let result = coefficients.iter().rev().fold(0.0, |acc, coefficient| acc * x + *coefficient);
+    result.is_finite().then_some(result)
+}
+
+fn airy_ai_value(x: f64) -> Option<f64> {
+    let ai0 = 1.0 / (3.0_f64.powf(2.0 / 3.0) * gamma_function(2.0 / 3.0)?);
+    let ai1 = -1.0 / (3.0_f64.powf(1.0 / 3.0) * gamma_function(1.0 / 3.0)?);
+    airy_series(x, ai0, ai1)
+}
+
+fn airy_bi_value(x: f64) -> Option<f64> {
+    let bi0 = 1.0 / (3.0_f64.powf(1.0 / 6.0) * gamma_function(2.0 / 3.0)?);
+    let bi1 = 3.0_f64.powf(1.0 / 6.0) / gamma_function(1.0 / 3.0)?;
+    airy_series(x, bi0, bi1)
+}
+
+fn dawson_value(x: f64) -> Option<f64> {
+    if !x.is_finite() || x.abs() > 8.0 { return None; }
+    if x == 0.0 { return Some(0.0); }
+    let sign = x.signum();
+    let end = x.abs();
+    let steps = 128usize;
+    let h = end / steps as f64;
+    let mut sum = (-end * end).exp() + 1.0;
+    for i in 1..steps {
+        let t = i as f64 * h;
+        let y = (t * t - end * end).exp();
+        sum += if i % 2 == 0 { 2.0 * y } else { 4.0 * y };
+    }
+    Some(sign * sum * h / 3.0)
+}
+
+fn expint_ei_value(x: f64) -> Option<f64> {
+    if !x.is_finite() || x == 0.0 || x.abs() > 20.0 { return None; }
+    let mut term = 1.0;
+    let mut sum = 0.0;
+    for k in 1..=300 {
+        term *= x / k as f64;
+        let add = term / k as f64;
+        sum += add;
+        if add.abs() < 1.0e-15 * sum.abs().max(1.0) { break; }
+    }
+    let result = EULER_MASCHERONI + x.abs().ln() + sum;
+    result.is_finite().then_some(result)
+}
+
+fn bessel_i0_value(x: f64) -> Option<f64> {
+    if !x.is_finite() || x.abs() > 20.0 { return None; }
+    let q = x * x / 4.0;
+    let mut term = 1.0;
+    let mut sum = 1.0;
+    for k in 1..=200 {
+        term *= q / (k as f64 * k as f64);
+        sum += term;
+        if term.abs() < 1.0e-15 * sum.abs().max(1.0) { break; }
+    }
+    sum.is_finite().then_some(sum)
+}
+
+fn bessel_i1_value(x: f64) -> Option<f64> {
+    if !x.is_finite() || x.abs() > 20.0 { return None; }
+    let q = x * x / 4.0;
+    let mut term = x / 2.0;
+    let mut sum = term;
+    for k in 1..=200 {
+        term *= q / (k as f64 * (k + 1) as f64);
+        sum += term;
+        if term.abs() < 1.0e-15 * sum.abs().max(1.0) { break; }
+    }
+    sum.is_finite().then_some(sum)
+}
+
+fn bessel_k_value(x: f64, order: usize) -> Option<f64> {
+    if !x.is_finite() || x <= 0.0 || x > 30.0 { return None; }
+    let end = (8.0 + (1.0 / x).ln().max(0.0)).min(18.0);
+    let steps = 128usize;
+    let h = end / steps as f64;
+    let integrand = |t: f64| (-x * t.cosh()).exp() * (if order == 0 { 1.0 } else { t.cosh() });
+    let mut sum = integrand(0.0) + integrand(end);
+    for i in 1..steps {
+        let y = integrand(i as f64 * h);
+        sum += if i % 2 == 0 { 2.0 * y } else { 4.0 * y };
+    }
+    let result = sum * h / 3.0;
+    result.is_finite().then_some(result)
+}
+
+fn log1pmx_value(x: f64) -> Option<f64> {
+    if !x.is_finite() || x <= -1.0 { return None; }
+    let result = if x.abs() < 1.0e-4 {
+        let mut term = x * x;
+        let mut sum = -term / 2.0;
+        for k in 3..=30 {
+            term *= x;
+            let add = if k % 2 == 0 { -term / k as f64 } else { term / k as f64 };
+            sum += add;
+        }
+        sum
+    } else { x.ln_1p() - x };
+    result.is_finite().then_some(result)
+}
+
+fn hurwitz_zeta_value(s: f64, q: f64) -> Option<f64> {
+    if !s.is_finite() || !q.is_finite() || s <= 1.0 || q <= 0.0 || s > 100.0 || q > 1.0e6 { return None; }
+    const N: usize = 40;
+    let mut sum = 0.0;
+    for k in 0..N { sum += (q + k as f64).powf(-s); }
+    let x = q + N as f64;
+    sum += x.powf(1.0 - s) / (s - 1.0) + 0.5 * x.powf(-s);
+    sum += s / 12.0 * x.powf(-s - 1.0);
+    sum -= s * (s + 1.0) * (s + 2.0) / 720.0 * x.powf(-s - 3.0);
+    sum += s * (s + 1.0) * (s + 2.0) * (s + 3.0) * (s + 4.0) / 30240.0 * x.powf(-s - 5.0);
+    sum.is_finite().then_some(sum)
+}
+
+fn gamma_pq(a: f64, x: f64) -> Option<(f64, f64)> {
+    if !a.is_finite() || !x.is_finite() || a <= 0.0 || a > 100.0 || x < 0.0 || x > 1.0e6 { return None; }
+    if x == 0.0 { return Some((0.0, 1.0)); }
+    let log_factor = -x + a * x.ln() - gamma_function(a)?.ln();
+    if x < a + 1.0 {
+        let mut ap = a;
+        let mut delta = 1.0 / a;
+        let mut sum = delta;
+        for _ in 0..500 {
+            ap += 1.0;
+            delta *= x / ap;
+            sum += delta;
+            if delta.abs() < sum.abs() * 1.0e-15 { break; }
+        }
+        let p = (sum * log_factor.exp()).clamp(0.0, 1.0);
+        Some((p, (1.0 - p).clamp(0.0, 1.0)))
+    } else {
+        let tiny = 1.0e-300;
+        let mut b = x + 1.0 - a;
+        let mut c = 1.0 / tiny;
+        let mut d = 1.0 / b;
+        let mut h = d;
+        for i in 1..=500 {
+            let fi = i as f64;
+            let an = -fi * (fi - a);
+            b += 2.0;
+            d = an * d + b;
+            if d.abs() < tiny { d = tiny; }
+            c = b + an / c;
+            if c.abs() < tiny { c = tiny; }
+            d = 1.0 / d;
+            let delta = d * c;
+            h *= delta;
+            if (delta - 1.0).abs() < 1.0e-15 { break; }
+        }
+        let q = (log_factor.exp() * h).clamp(0.0, 1.0);
+        Some(((1.0 - q).clamp(0.0, 1.0), q))
+    }
+}
+
+fn beta_continued_fraction(a: f64, b: f64, x: f64) -> Option<f64> {
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
+    let tiny = 1.0e-300;
+    let mut c = 1.0;
+    let mut d = 1.0 - qab * x / qap;
+    if d.abs() < tiny { d = tiny; }
+    d = 1.0 / d;
+    let mut h = d;
+    for m in 1..=300 {
+        let m_f = m as f64;
+        let m2 = 2.0 * m_f;
+        let mut aa = m_f * (b - m_f) * x / ((qam + m2) * (a + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < tiny { d = tiny; }
+        c = 1.0 + aa / c;
+        if c.abs() < tiny { c = tiny; }
+        d = 1.0 / d;
+        h *= d * c;
+        aa = -(a + m_f) * (qab + m_f) * x / ((a + m2) * (qap + m2));
+        d = 1.0 + aa * d;
+        if d.abs() < tiny { d = tiny; }
+        c = 1.0 + aa / c;
+        if c.abs() < tiny { c = tiny; }
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() < 3.0e-14 { break; }
+    }
+    h.is_finite().then_some(h)
+}
+
+fn regularized_beta_value(x: f64, a: f64, b: f64) -> Option<f64> {
+    if !x.is_finite() || !a.is_finite() || !b.is_finite() || !(0.0..=1.0).contains(&x) || a <= 0.0 || b <= 0.0 || a > 100.0 || b > 100.0 { return None; }
+    if x == 0.0 { return Some(0.0); }
+    if x == 1.0 { return Some(1.0); }
+    let bt = (gamma_function(a + b)?.ln() - gamma_function(a)?.ln() - gamma_function(b)?.ln() + a * x.ln() + b * (-x).ln_1p()).exp();
+    let result = if x < (a + 1.0) / (a + b + 2.0) {
+        bt * beta_continued_fraction(a, b, x)? / a
+    } else {
+        1.0 - bt * beta_continued_fraction(b, a, 1.0 - x)? / b
+    };
+    result.is_finite().then_some(result.clamp(0.0, 1.0))
+}
+
+fn poisson_pmf_value(k: f64, lambda: f64) -> Option<f64> {
+    let k = integer_argument(k)?;
+    if k < 0 || k > 500 || !lambda.is_finite() || lambda < 0.0 || lambda > 700.0 { return None; }
+    if lambda == 0.0 { return Some(if k == 0 { 1.0 } else { 0.0 }); }
+    let log_probability = -lambda + k as f64 * lambda.ln() - gamma_function(k as f64 + 1.0)?.ln();
+    Some(log_probability.exp())
+}
+
+fn poisson_cdf_value(k: f64, lambda: f64) -> Option<f64> {
+    let k = integer_argument(k)?;
+    if k < 0 { return Some(0.0); }
+    if k > 500 || !lambda.is_finite() || lambda < 0.0 || lambda > 700.0 { return None; }
+    let mut sum = 0.0;
+    for i in 0..=k { sum += poisson_pmf_value(i as f64, lambda)?; }
+    Some(sum.clamp(0.0, 1.0))
+}
+
+fn exponential_pdf_value(x: f64, lambda: f64) -> Option<f64> {
+    if !x.is_finite() || !lambda.is_finite() || lambda <= 0.0 { return None; }
+    Some(if x < 0.0 { 0.0 } else { lambda * (-lambda * x).exp() })
+}
+
+fn exponential_cdf_value(x: f64, lambda: f64) -> Option<f64> {
+    if !x.is_finite() || !lambda.is_finite() || lambda <= 0.0 { return None; }
+    Some(if x < 0.0 { 0.0 } else { 1.0 - (-lambda * x).exp() })
+}
+
+fn student_t_pdf_value(x: f64, nu: f64) -> Option<f64> {
+    if !x.is_finite() || !nu.is_finite() || nu <= 0.0 || nu > 100.0 { return None; }
+    let log_norm = gamma_function((nu + 1.0) / 2.0)?.ln() - gamma_function(nu / 2.0)?.ln() - 0.5 * (nu * std::f64::consts::PI).ln();
+    Some((log_norm - (nu + 1.0) / 2.0 * (1.0 + x * x / nu).ln()).exp())
+}
+
+fn student_t_cdf_value(x: f64, nu: f64) -> Option<f64> {
+    if !x.is_finite() || !nu.is_finite() || nu <= 0.0 || nu > 100.0 { return None; }
+    if x == 0.0 { return Some(0.5); }
+    let ib = regularized_beta_value(nu / (nu + x * x), nu / 2.0, 0.5)?;
+    Some(if x > 0.0 { 1.0 - 0.5 * ib } else { 0.5 * ib })
+}
+
+fn chi_squared_pdf_value(x: f64, degrees: f64) -> Option<f64> {
+    if !x.is_finite() || !degrees.is_finite() || degrees <= 0.0 || degrees > 200.0 { return None; }
+    if x < 0.0 { return Some(0.0); }
+    if x == 0.0 { return Some(if degrees < 2.0 { f64::INFINITY } else if degrees == 2.0 { 0.5 } else { 0.0 }); }
+    let a = degrees / 2.0;
+    Some(((a - 1.0) * x.ln() - x / 2.0 - a * 2.0_f64.ln() - gamma_function(a)?.ln()).exp())
+}
+
+fn chi_squared_cdf_value(x: f64, degrees: f64) -> Option<f64> {
+    if !x.is_finite() || !degrees.is_finite() || degrees <= 0.0 || degrees > 200.0 { return None; }
+    if x <= 0.0 { return Some(0.0); }
+    gamma_pq(degrees / 2.0, x / 2.0).map(|pair| pair.0)
+}
+
+fn gamma_pdf_value(x: f64, shape: f64, scale: f64) -> Option<f64> {
+    if !x.is_finite() || !shape.is_finite() || !scale.is_finite() || shape <= 0.0 || scale <= 0.0 || shape > 100.0 { return None; }
+    if x < 0.0 { return Some(0.0); }
+    if x == 0.0 { return Some(if shape < 1.0 { f64::INFINITY } else if shape == 1.0 { 1.0 / scale } else { 0.0 }); }
+    Some(((shape - 1.0) * x.ln() - x / scale - gamma_function(shape)?.ln() - shape * scale.ln()).exp())
+}
+
+fn gamma_cdf_value(x: f64, shape: f64, scale: f64) -> Option<f64> {
+    if !x.is_finite() || !shape.is_finite() || !scale.is_finite() || shape <= 0.0 || scale <= 0.0 { return None; }
+    if x <= 0.0 { return Some(0.0); }
+    gamma_pq(shape, x / scale).map(|pair| pair.0)
+}
+
+fn beta_pdf_value(x: f64, alpha: f64, beta: f64) -> Option<f64> {
+    if !x.is_finite() || !alpha.is_finite() || !beta.is_finite() || alpha <= 0.0 || beta <= 0.0 { return None; }
+    if !(0.0..=1.0).contains(&x) { return Some(0.0); }
+    if x == 0.0 || x == 1.0 { return None; }
+    Some(((alpha - 1.0) * x.ln() + (beta - 1.0) * (-x).ln_1p() - beta_value(alpha, beta)?.ln()).exp())
+}
+
+fn beta_cdf_value(x: f64, alpha: f64, beta: f64) -> Option<f64> {
+    regularized_beta_value(x, alpha, beta)
+}
+
+fn uniform_pdf_value(x: f64, a: f64, b: f64) -> Option<f64> {
+    if !x.is_finite() || !a.is_finite() || !b.is_finite() || a >= b { return None; }
+    Some(if x < a || x > b { 0.0 } else { 1.0 / (b - a) })
+}
+
+fn uniform_cdf_value(x: f64, a: f64, b: f64) -> Option<f64> {
+    if !x.is_finite() || !a.is_finite() || !b.is_finite() || a >= b { return None; }
+    Some(((x - a) / (b - a)).clamp(0.0, 1.0))
+}
+
+fn multinomial_value(n: f64, k1: f64, k2: f64) -> Option<f64> {
+    let n = integer_argument(n)?;
+    let k1 = integer_argument(k1)?;
+    let k2 = integer_argument(k2)?;
+    if n < 0 || n > 20 || k1 < 0 || k2 < 0 || k1 + k2 > n { return None; }
+    let k3 = n - k1 - k2;
+    let numerator = factorial(n as f64)?;
+    let denominator = factorial(k1 as f64)? * factorial(k2 as f64)? * factorial(k3 as f64)?;
+    Some(numerator / denominator)
+}
+
 fn for_each_chained_added_unary(value: f64, mut emit: impl FnMut(f64, UnaryOp)) {
     if let Some(v) = next_prime_value(value) { emit(v, UnaryOp::NextPrime); }
 }
@@ -1909,9 +2651,51 @@ fn for_each_added_unary(value: f64, mut emit: impl FnMut(f64, UnaryOp)) {
     if let Some(v) = tribonacci_value(value) { emit(v, UnaryOp::Tribonacci); }
     if let Some(v) = bernoulli_value(value) { emit(v, UnaryOp::Bernoulli); }
     if let Some(v) = euler_number_value(value) { emit(v, UnaryOp::EulerNumber); }
+    if let Some(v) = airy_ai_value(value) { emit(v, UnaryOp::AiryAi); }
+    if let Some(v) = airy_bi_value(value) { emit(v, UnaryOp::AiryBi); }
+    if let Some(v) = dawson_value(value) { emit(v, UnaryOp::Dawson); }
+    if let Some(v) = expint_ei_value(value) { emit(v, UnaryOp::Expint); }
+    if let Some(v) = bessel_i0_value(value) { emit(v, UnaryOp::BesselI0); }
+    if let Some(v) = bessel_i1_value(value) { emit(v, UnaryOp::BesselI1); }
+    if let Some(v) = bessel_k_value(value, 0) { emit(v, UnaryOp::BesselK0); }
+    if let Some(v) = bessel_k_value(value, 1) { emit(v, UnaryOp::BesselK1); }
     emit(if value.is_finite() { 1.0 } else { 0.0 }, UnaryOp::IsFinite);
     emit(if value.fract() == 0.0 { 1.0 } else { 0.0 }, UnaryOp::IsInteger);
     emit(if value.is_nan() { 1.0 } else { 0.0 }, UnaryOp::IsNan);
+}
+
+fn for_each_complex_unary_result(value: Complex, mut emit: impl FnMut(Complex, ComplexUnaryOp)) {
+    if value.im == 0.0 {
+        if value.re < 0.0 {
+            let argument = std::f64::consts::PI;
+            emit(Complex::new(argument, 0.0), ComplexUnaryOp::Argument);
+            emit(Complex::new(argument, 0.0), ComplexUnaryOp::Phase);
+            if let Some(logarithm) = value.ln() {
+                emit(logarithm, ComplexUnaryOp::Ln);
+            }
+            emit(value.sqrt(), ComplexUnaryOp::Sqrt);
+        }
+        return;
+    }
+
+    emit(Complex::new(value.re, -value.im), ComplexUnaryOp::Conjugate);
+    emit(Complex::new(value.re, 0.0), ComplexUnaryOp::Real);
+    emit(Complex::new(value.im, 0.0), ComplexUnaryOp::Imaginary);
+    let argument = value.im.atan2(value.re);
+    emit(Complex::new(argument, 0.0), ComplexUnaryOp::Argument);
+    let norm = value.re * value.re + value.im * value.im;
+    emit(Complex::new(norm, 0.0), ComplexUnaryOp::Norm);
+    emit(Complex::new(argument, 0.0), ComplexUnaryOp::Phase);
+    emit(value.exp(), ComplexUnaryOp::Exp);
+    if let Some(logarithm) = value.ln() {
+        emit(logarithm, ComplexUnaryOp::Ln);
+    }
+    emit(value.sqrt(), ComplexUnaryOp::Sqrt);
+    emit(value.sin(), ComplexUnaryOp::Sin);
+    emit(value.cos(), ComplexUnaryOp::Cos);
+    if let Some(tangent) = value.tan() {
+        emit(tangent, ComplexUnaryOp::Tan);
+    }
 }
 
 fn for_each_added_unary_cached(value: f64, mut emit: impl FnMut(f64, UnaryOp)) {
@@ -2049,6 +2833,54 @@ fn render_node(node_id: usize, nodes: &[ExprNode], digits: &[u8], out: &mut Stri
             render_node(third, nodes, digits, out);
             out.push_str(", ");
             render_node(fourth, nodes, digits, out);
+            out.push(')');
+        }
+        ExprNode::Quinary(op, first, second, third, fourth, fifth) => {
+            out.push_str(quinary_name(op));
+            out.push('(');
+            render_node(first, nodes, digits, out);
+            out.push_str(", ");
+            render_node(second, nodes, digits, out);
+            out.push_str(", ");
+            render_node(third, nodes, digits, out);
+            out.push_str(", ");
+            render_node(fourth, nodes, digits, out);
+            out.push_str(", ");
+            render_node(fifth, nodes, digits, out);
+            out.push(')');
+        }
+        ExprNode::ComplexUnary(op, child) => {
+            out.push_str(match op {
+                ComplexUnaryOp::Conjugate => "conj",
+                ComplexUnaryOp::Real => "real",
+                ComplexUnaryOp::Imaginary => "imag",
+                ComplexUnaryOp::Argument => "arg",
+                ComplexUnaryOp::Norm => "norm",
+                ComplexUnaryOp::Phase => "phase",
+                ComplexUnaryOp::Exp => "complex_exp",
+                ComplexUnaryOp::Ln => "complex_ln",
+                ComplexUnaryOp::Sqrt => "complex_sqrt",
+                ComplexUnaryOp::Sin => "complex_sin",
+                ComplexUnaryOp::Cos => "complex_cos",
+                ComplexUnaryOp::Tan => "complex_tan",
+            });
+            out.push('(');
+            render_node(child, nodes, digits, out);
+            out.push(')');
+        }
+        ExprNode::ComplexBinary(op, left, right) => {
+            out.push_str(match op {
+                ComplexBinaryOp::Add => "complex_add",
+                ComplexBinaryOp::Subtract => "complex_sub",
+                ComplexBinaryOp::Multiply => "complex_mul",
+                ComplexBinaryOp::Divide => "complex_div",
+                ComplexBinaryOp::Power => "complex_pow",
+                ComplexBinaryOp::Logarithm => "complex_log",
+            });
+            out.push('(');
+            render_node(left, nodes, digits, out);
+            out.push_str(", ");
+            render_node(right, nodes, digits, out);
             out.push(')');
         }
     }
@@ -2195,6 +3027,60 @@ fn unary_name(op: UnaryOp) -> &'static str {
         UnaryOp::IsFinite => "is_finite",
         UnaryOp::IsInteger => "is_integer",
         UnaryOp::IsNan => "is_nan",
+        UnaryOp::RoundEven => "round_even",
+        UnaryOp::RoundAway => "round_away",
+        UnaryOp::Rint => "rint",
+        UnaryOp::NearbyInt => "nearbyint",
+        UnaryOp::InverseSquare => "inverse_square",
+        UnaryOp::InverseCube => "inverse_cube",
+        UnaryOp::Acsc => "acsc",
+        UnaryOp::Asec => "asec",
+        UnaryOp::Acot => "acot",
+        UnaryOp::Acsch => "acsch",
+        UnaryOp::Asech => "asech",
+        UnaryOp::Acoth => "acoth",
+        UnaryOp::NextUp => "next_up",
+        UnaryOp::NextDown => "next_down",
+        UnaryOp::Ulp => "ulp",
+        UnaryOp::Ilogb => "ilogb",
+        UnaryOp::IsNormal => "is_normal",
+        UnaryOp::IsSubnormal => "is_subnormal",
+        UnaryOp::IsInfinite => "is_infinite",
+        UnaryOp::IsSignPositive => "is_sign_positive",
+        UnaryOp::IsSignNegative => "is_sign_negative",
+        UnaryOp::IsComposite => "is_composite",
+        UnaryOp::IsPrimePower => "is_prime_power",
+        UnaryOp::SmallestPrimeFactor => "smallest_prime_factor",
+        UnaryOp::LargestPrimeFactor => "largest_prime_factor",
+        UnaryOp::Omega => "omega",
+        UnaryOp::BigOmega => "big_omega",
+        UnaryOp::IsAbundant => "is_abundant",
+        UnaryOp::IsDeficient => "is_deficient",
+        UnaryOp::Subfactorial => "subfactorial",
+        UnaryOp::Superfactorial => "superfactorial",
+        UnaryOp::Hyperfactorial => "hyperfactorial",
+        UnaryOp::BitNot => "bit_not",
+        UnaryOp::CountOnes => "count_ones",
+        UnaryOp::CountZeros => "count_zeros",
+        UnaryOp::LeadingZeros => "leading_zeros",
+        UnaryOp::TrailingZeros => "trailing_zeros",
+        UnaryOp::ReverseBits => "reverse_bits",
+        UnaryOp::ByteSwap => "byte_swap",
+        UnaryOp::AiryAi => "airy_ai",
+        UnaryOp::AiryBi => "airy_bi",
+        UnaryOp::Dawson => "dawson",
+        UnaryOp::Expint => "expint",
+        UnaryOp::BesselI0 => "bessel_i0",
+        UnaryOp::BesselI1 => "bessel_i1",
+        UnaryOp::BesselK0 => "bessel_k0",
+        UnaryOp::BesselK1 => "bessel_k1",
+        UnaryOp::OneMinus => "one_minus",
+        UnaryOp::Frac => "frac",
+        UnaryOp::Rsqrt => "rsqrt",
+        UnaryOp::IsPositive => "is_positive",
+        UnaryOp::IsNegative => "is_negative",
+        UnaryOp::IsZero => "is_zero",
+        UnaryOp::Log1pmx => "log1pmx",
         UnaryOp::Neg | UnaryOp::Square | UnaryOp::Cube | UnaryOp::Reciprocal
         | UnaryOp::Percent | UnaryOp::Factorial => unreachable!(),
     }
@@ -2272,6 +3158,47 @@ fn binary_name(op: BinaryOp) -> &'static str {
         BinaryOp::JacobiSymbol => "jacobi",
         BinaryOp::KroneckerSymbol => "kronecker",
         BinaryOp::RoundTo => "round_to",
+        BinaryOp::Fmod => "fmod",
+        BinaryOp::Remainder => "remainder",
+        BinaryOp::Quotient => "quotient",
+        BinaryOp::IntegerRoot => "integer_root",
+        BinaryOp::SignedPow => "signed_pow",
+        BinaryOp::SmallestCommonMultiple => "smallest_common_multiple",
+        BinaryOp::Binomial => "binomial",
+        BinaryOp::Choose => "choose",
+        BinaryOp::Permute => "permute",
+        BinaryOp::LogAddExp2 => "logaddexp2",
+        BinaryOp::LogSubExp => "log_sub_exp",
+        BinaryOp::HurwitzZeta => "hurwitz_zeta",
+        BinaryOp::IncompleteGamma => "incomplete_gamma",
+        BinaryOp::RegularizedGammaP => "regularized_gamma_p",
+        BinaryOp::RegularizedGammaQ => "regularized_gamma_q",
+        BinaryOp::ShiftLeft => "shift_left",
+        BinaryOp::ShiftRight => "shift_right",
+        BinaryOp::RotateLeft => "rotate_left",
+        BinaryOp::RotateRight => "rotate_right",
+        BinaryOp::BitTest => "bit_test",
+        BinaryOp::SetBit => "set_bit",
+        BinaryOp::ClearBit => "clear_bit",
+        BinaryOp::Equal => "equal",
+        BinaryOp::NotEqual => "not_equal",
+        BinaryOp::LessThan => "less_than",
+        BinaryOp::GreaterThan => "greater_than",
+        BinaryOp::LessEqual => "less_equal",
+        BinaryOp::GreaterEqual => "greater_equal",
+        BinaryOp::ExponentialPdf => "exponential_pdf",
+        BinaryOp::ExponentialCdf => "exponential_cdf",
+        BinaryOp::PoissonPmf => "poisson_pmf",
+        BinaryOp::PoissonCdf => "poisson_cdf",
+        BinaryOp::StudentTPdf => "student_t_pdf",
+        BinaryOp::StudentTCdf => "student_t_cdf",
+        BinaryOp::ChiSquaredPdf => "chi_squared_pdf",
+        BinaryOp::ChiSquaredCdf => "chi_squared_cdf",
+        BinaryOp::DivRemQuotient => "div_rem_quotient",
+        BinaryOp::DivRemRemainder => "div_rem_remainder",
+        BinaryOp::ExtendedGcdGcd => "extended_gcd_gcd",
+        BinaryOp::ExtendedGcdX => "extended_gcd_x",
+        BinaryOp::ExtendedGcdY => "extended_gcd_y",
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod
         | BinaryOp::Pow => unreachable!(),
     }
@@ -2285,12 +3212,41 @@ fn ternary_name(op: TernaryOp) -> &'static str {
         TernaryOp::Smoothstep => "smoothstep",
         TernaryOp::ModularPower => "mod_pow",
         TernaryOp::BinomialCdf => "binomial_cdf",
+        TernaryOp::Fma => "fma",
+        TernaryOp::MulAdd => "mul_add",
+        TernaryOp::Median3 => "median3",
+        TernaryOp::Hypot3 => "hypot3",
+        TernaryOp::InverseLerp => "inv_lerp",
+        TernaryOp::IsBetween => "is_between",
+        TernaryOp::BinomialPmf => "binomial_pmf",
+        TernaryOp::BetaInc => "beta_inc",
+        TernaryOp::RegularizedBeta => "regularized_beta",
+        TernaryOp::ModularAdd => "modular_add",
+        TernaryOp::ModularSub => "modular_sub",
+        TernaryOp::ModularMul => "modular_mul",
+        TernaryOp::Multinomial => "multinomial",
+        TernaryOp::GammaPdf => "gamma_pdf",
+        TernaryOp::GammaCdf => "gamma_cdf",
+        TernaryOp::BetaPdf => "beta_pdf",
+        TernaryOp::BetaCdf => "beta_cdf",
+        TernaryOp::UniformPdf => "uniform_pdf",
+        TernaryOp::UniformCdf => "uniform_cdf",
     }
 }
 
 #[inline]
 fn quaternary_name(op: QuaternaryOp) -> &'static str {
-    match op { QuaternaryOp::ChineseRemainder => "crt" }
+    match op {
+        QuaternaryOp::ChineseRemainder => "crt",
+        QuaternaryOp::Bilinear => "bilinear",
+        QuaternaryOp::Multilinear => "multilinear",
+        QuaternaryOp::CubicInterp => "cubic_interp",
+    }
+}
+
+#[inline]
+fn quinary_name(op: QuinaryOp) -> &'static str {
+    match op { QuinaryOp::Remap => "remap" }
 }
 
 fn insert_range_options(
@@ -2347,6 +3303,18 @@ fn generate_long_binary_results(
     a: Candidate,
     b: Candidate,
 ) {
+    for_each_complex_binary_pair_result(a, b, |value, op| {
+        insert_complex_into_cell(
+            cell,
+            nodes,
+            target,
+            value,
+            ExprNode::ComplexBinary(op, a.node_id, b.node_id),
+        );
+    });
+    if a.imag != 0.0 || b.imag != 0.0 {
+        return;
+    }
     let av = a.value;
     let bv = b.value;
     insert_long_binary(cell, nodes, target, av + bv, a, b, BinaryOp::Add);
@@ -2472,21 +3440,22 @@ fn generate_long_binary_results(
 }
 
 fn consider_existing_long_best(
-    best: &mut Option<(f64, f64, usize, String)>,
+    best: &mut Option<(f64, f64, f64, usize, String)>,
     candidate: Candidate,
     cost: usize,
-    target: f64,
+    _target: f64,
     nodes: &[ExprNode],
     digits: &[u8],
 ) {
-    let score = (candidate.value - target).abs();
-    let should_replace = best.as_ref().map_or(true, |(best_score, _, best_cost, _)| {
+    let score = candidate.score;
+    let should_replace = best.as_ref().map_or(true, |(best_score, _, _, best_cost, _)| {
         score < *best_score || (score == *best_score && cost < *best_cost)
     });
     if should_replace {
         *best = Some((
             score,
             candidate.value,
+            candidate.imag,
             cost,
             render_expr(candidate.node_id, nodes, digits),
         ));
@@ -2494,7 +3463,7 @@ fn consider_existing_long_best(
 }
 
 fn consider_unary_long_best(
-    best: &mut Option<(f64, f64, usize, String)>,
+    best: &mut Option<(f64, f64, f64, usize, String)>,
     nodes: &mut Vec<ExprNode>,
     digits: &[u8],
     target: f64,
@@ -2508,18 +3477,44 @@ fn consider_unary_long_best(
     }
     let value = if value == 0.0 { 0.0 } else { value };
     let score = (value - target).abs();
-    let should_replace = best.as_ref().map_or(true, |(best_score, _, best_cost, _)| {
+    let should_replace = best.as_ref().map_or(true, |(best_score, _, _, best_cost, _)| {
         score < *best_score || (score == *best_score && cost < *best_cost)
     });
     if should_replace {
         let node_id = nodes.len();
         nodes.push(ExprNode::Unary(op, child));
-        *best = Some((score, value, cost, render_expr(node_id, nodes, digits)));
+        *best = Some((score, value, 0.0, cost, render_expr(node_id, nodes, digits)));
+    }
+}
+
+fn consider_complex_unary_long_best(
+    best: &mut Option<(f64, f64, f64, usize, String)>,
+    nodes: &mut Vec<ExprNode>,
+    digits: &[u8],
+    target: f64,
+    value: Complex,
+    child: usize,
+    op: ComplexUnaryOp,
+    cost: usize,
+) {
+    if !value.is_finite() || value.magnitude() > MAX_ABS_VALUE {
+        return;
+    }
+    let re = if value.re == 0.0 { 0.0 } else { value.re };
+    let im = if value.im == 0.0 { 0.0 } else { value.im };
+    let score = (re - target).hypot(im);
+    let should_replace = best.as_ref().map_or(true, |(best_score, _, _, best_cost, _)| {
+        score < *best_score || (score == *best_score && cost < *best_cost)
+    });
+    if should_replace {
+        let node_id = nodes.len();
+        nodes.push(ExprNode::ComplexUnary(op, child));
+        *best = Some((score, re, im, cost, render_expr(node_id, nodes, digits)));
     }
 }
 
 fn generate_long_unary_best(
-    best: &mut Option<(f64, f64, usize, String)>,
+    best: &mut Option<(f64, f64, f64, usize, String)>,
     nodes: &mut Vec<ExprNode>,
     digits: &[u8],
     target: f64,
@@ -2528,6 +3523,13 @@ fn generate_long_unary_best(
 ) {
     let value = candidate.value;
     let child = candidate.node_id;
+    let complex_value = Complex::new(candidate.value, candidate.imag);
+    for_each_complex_unary_result(complex_value, |result, op| {
+        consider_complex_unary_long_best(best, nodes, digits, target, result, child, op, cost);
+    });
+    if candidate.imag != 0.0 {
+        return;
+    }
     macro_rules! consider {
         ($result:expr, $op:expr) => {
             consider_unary_long_best(best, nodes, digits, target, $result, child, $op, cost)
@@ -2785,6 +3787,74 @@ fn for_each_extra_unary(
     if let Some(result) = lambert_w0(value) {
         emit(result, UnaryOp::LambertW);
     }
+
+    let rounded_even = round_ties_even(value);
+    emit(rounded_even, UnaryOp::RoundEven);
+    emit(value.round(), UnaryOp::RoundAway);
+    emit(rounded_even, UnaryOp::Rint);
+    emit(rounded_even, UnaryOp::NearbyInt);
+    if value != 0.0 {
+        emit(1.0 / value.powi(2), UnaryOp::InverseSquare);
+        emit(1.0 / value.powi(3), UnaryOp::InverseCube);
+        emit(value.recip().asin(), UnaryOp::Acsc);
+        emit(value.recip().acos(), UnaryOp::Asec);
+        emit(value.recip().atan(), UnaryOp::Acot);
+        emit(value.recip().asinh(), UnaryOp::Acsch);
+        if value.recip() >= 1.0 { emit(value.recip().acosh(), UnaryOp::Asech); }
+        if value.abs() > 1.0 { emit(value.recip().atanh(), UnaryOp::Acoth); }
+        emit(next_after_value(value, f64::INFINITY), UnaryOp::NextUp);
+        emit(next_after_value(value, f64::NEG_INFINITY), UnaryOp::NextDown);
+        if let Some(result) = ulp_value(value) { emit(result, UnaryOp::Ulp); }
+        if let Some(result) = ilogb_value(value) { emit(result, UnaryOp::Ilogb); }
+    } else {
+        emit(f64::from_bits(1), UnaryOp::NextUp);
+        emit(-f64::from_bits(1), UnaryOp::NextDown);
+        emit(f64::from_bits(1), UnaryOp::Ulp);
+    }
+    emit(if value.is_normal() { 1.0 } else { 0.0 }, UnaryOp::IsNormal);
+    emit(if value != 0.0 && value.is_finite() && !value.is_normal() { 1.0 } else { 0.0 }, UnaryOp::IsSubnormal);
+    emit(if value.is_infinite() { 1.0 } else { 0.0 }, UnaryOp::IsInfinite);
+    emit(if value.is_sign_positive() { 1.0 } else { 0.0 }, UnaryOp::IsSignPositive);
+    emit(if value.is_sign_negative() { 1.0 } else { 0.0 }, UnaryOp::IsSignNegative);
+    emit(if value > 0.0 { 1.0 } else { 0.0 }, UnaryOp::IsPositive);
+    emit(if value < 0.0 { 1.0 } else { 0.0 }, UnaryOp::IsNegative);
+    emit(if value == 0.0 { 1.0 } else { 0.0 }, UnaryOp::IsZero);
+    emit(1.0 - value, UnaryOp::OneMinus);
+    emit(value.fract(), UnaryOp::Frac);
+    if let Some(result) = log1pmx_value(value) { emit(result, UnaryOp::Log1pmx); }
+    if value > 0.0 { emit(1.0 / value.sqrt(), UnaryOp::Rsqrt); }
+
+    if let Some(n) = integer_argument(value) {
+        if n < 2 {
+            emit(0.0, UnaryOp::IsComposite);
+            emit(0.0, UnaryOp::IsPrimePower);
+        }
+        let bits = n as u64;
+        emit((!bits) as i64 as f64, UnaryOp::BitNot);
+        emit(bits.count_ones() as f64, UnaryOp::CountOnes);
+        emit((64 - bits.count_ones()) as f64, UnaryOp::CountZeros);
+        emit(bits.leading_zeros() as f64, UnaryOp::LeadingZeros);
+        emit(bits.trailing_zeros() as f64, UnaryOp::TrailingZeros);
+        emit(bits.reverse_bits() as f64, UnaryOp::ReverseBits);
+        emit(bits.swap_bytes() as f64, UnaryOp::ByteSwap);
+        if n >= 2 {
+            if let Some((smallest, largest, distinct, total)) = prime_factor_summary(value) {
+                emit(if distinct == 1 { 1.0 } else { 0.0 }, UnaryOp::IsPrimePower);
+                emit(smallest as f64, UnaryOp::SmallestPrimeFactor);
+                emit(largest as f64, UnaryOp::LargestPrimeFactor);
+                emit(distinct as f64, UnaryOp::Omega);
+                emit(total as f64, UnaryOp::BigOmega);
+                emit(if is_prime_u64(n as u64) { 0.0 } else { 1.0 }, UnaryOp::IsComposite);
+            }
+        }
+        if let Some((abundant, deficient)) = is_abundant_or_deficient(value) {
+            emit(abundant, UnaryOp::IsAbundant);
+            emit(deficient, UnaryOp::IsDeficient);
+        }
+    }
+    if let Some(result) = derangement_value(value) { emit(result, UnaryOp::Subfactorial); }
+    if let Some(result) = superfactorial_value(value) { emit(result, UnaryOp::Superfactorial); }
+    if let Some(result) = hyperfactorial_value(value) { emit(result, UnaryOp::Hyperfactorial); }
 }
 
 fn for_each_extra_binary(a: f64, b: f64, mut emit: impl FnMut(f64, BinaryOp)) {
@@ -2821,6 +3891,8 @@ fn for_each_extra_binary(a: f64, b: f64, mut emit: impl FnMut(f64, BinaryOp)) {
     emit(a * b - a - b, BinaryOp::ProductMinusSum);
     let minimum = a.min(b);
     emit(minimum - ((-(a - minimum)).exp() + (-(b - minimum)).exp()).ln(), BinaryOp::SmoothMinimum);
+
+
 }
 
 fn for_each_added_binary_directional(a: f64, b: f64, mut emit: impl FnMut(f64, BinaryOp)) {
@@ -2841,6 +3913,70 @@ fn for_each_added_binary_directional(a: f64, b: f64, mut emit: impl FnMut(f64, B
         }
     }
     if b != 0.0 { emit((a / b).round() * b, BinaryOp::RoundTo); }
+    if b != 0.0 {
+        let quotient = (a / b).trunc();
+        let trunc_remainder = a - quotient * b;
+        emit(a % b, BinaryOp::Fmod);
+        emit(quotient, BinaryOp::Quotient);
+        emit(quotient, BinaryOp::DivRemQuotient);
+        emit(trunc_remainder, BinaryOp::DivRemRemainder);
+        let nearest_quotient = round_ties_even(a / b);
+        emit(a - nearest_quotient * b, BinaryOp::Remainder);
+    }
+    if let Some((g, x, y)) = extended_gcd_values(a, b) {
+        emit(g, BinaryOp::ExtendedGcdGcd);
+        emit(x, BinaryOp::ExtendedGcdX);
+        emit(y, BinaryOp::ExtendedGcdY);
+    }
+    if let Some(result) = nth_root(a, b) { emit(result, BinaryOp::IntegerRoot); }
+    if a != 0.0 || b >= 0.0 {
+        let result = a.signum() * a.abs().powf(b);
+        emit(result, BinaryOp::SignedPow);
+    }
+    if let Some(result) = lcm_value(a, b) { emit(result, BinaryOp::SmallestCommonMultiple); }
+    if let Some(result) = combinations(a, b) {
+        emit(result, BinaryOp::Binomial);
+        emit(result, BinaryOp::Choose);
+    }
+    if let Some(result) = permutations(a, b) { emit(result, BinaryOp::Permute); }
+    let max2 = a.max(b);
+    emit(max2 + (2.0_f64.powf(a - max2) + 2.0_f64.powf(b - max2)).log2(), BinaryOp::LogAddExp2);
+    if a > b { emit(a + (-(b - a).exp()).ln_1p(), BinaryOp::LogSubExp); }
+    if let Some(result) = hurwitz_zeta_value(a, b) { emit(result, BinaryOp::HurwitzZeta); }
+    if let Some((p, q)) = gamma_pq(a, b) {
+        if let Some(gamma) = gamma_function(a) { emit(p * gamma, BinaryOp::IncompleteGamma); }
+        emit(p, BinaryOp::RegularizedGammaP);
+        emit(q, BinaryOp::RegularizedGammaQ);
+    }
+
+    if let (Some(ai), Some(bi)) = (integer_argument(a), integer_argument(b)) {
+        if (0..64).contains(&bi) {
+            let shift = bi as u32;
+            let ua = ai as u64;
+            emit(ua.wrapping_shl(shift) as i64 as f64, BinaryOp::ShiftLeft);
+            emit((ai >> shift) as f64, BinaryOp::ShiftRight);
+            emit(ua.rotate_left(shift) as f64, BinaryOp::RotateLeft);
+            emit(ua.rotate_right(shift) as f64, BinaryOp::RotateRight);
+            emit(if (ua & (1_u64 << shift)) != 0 { 1.0 } else { 0.0 }, BinaryOp::BitTest);
+            emit((ua | (1_u64 << shift)) as i64 as f64, BinaryOp::SetBit);
+            emit((ua & !(1_u64 << shift)) as i64 as f64, BinaryOp::ClearBit);
+        }
+    }
+    emit(if a == b { 1.0 } else { 0.0 }, BinaryOp::Equal);
+    emit(if a != b { 1.0 } else { 0.0 }, BinaryOp::NotEqual);
+    emit(if a < b { 1.0 } else { 0.0 }, BinaryOp::LessThan);
+    emit(if a > b { 1.0 } else { 0.0 }, BinaryOp::GreaterThan);
+    emit(if a <= b { 1.0 } else { 0.0 }, BinaryOp::LessEqual);
+    emit(if a >= b { 1.0 } else { 0.0 }, BinaryOp::GreaterEqual);
+
+    if let Some(v) = exponential_pdf_value(a, b) { emit(v, BinaryOp::ExponentialPdf); }
+    if let Some(v) = exponential_cdf_value(a, b) { emit(v, BinaryOp::ExponentialCdf); }
+    if let Some(v) = poisson_pmf_value(a, b) { emit(v, BinaryOp::PoissonPmf); }
+    if let Some(v) = poisson_cdf_value(a, b) { emit(v, BinaryOp::PoissonCdf); }
+    if let Some(v) = student_t_pdf_value(a, b) { emit(v, BinaryOp::StudentTPdf); }
+    if let Some(v) = student_t_cdf_value(a, b) { emit(v, BinaryOp::StudentTCdf); }
+    if let Some(v) = chi_squared_pdf_value(a, b) { emit(v, BinaryOp::ChiSquaredPdf); }
+    if let Some(v) = chi_squared_cdf_value(a, b) { emit(v, BinaryOp::ChiSquaredCdf); }
 }
 
 fn for_each_extra_binary_directional(a: f64, b: f64, mut emit: impl FnMut(f64, BinaryOp)) {
@@ -2885,9 +4021,9 @@ fn heuristic_search_for_order(
     depth: usize,
     candidate_limit: usize,
     fold_from_right: bool,
-) -> Option<(f64, f64, usize, String)> {
+) -> Option<(f64, f64, f64, usize, String)> {
     let max_chunks = (depth + 1).min(digits.len());
-    let mut best_overall: Option<(f64, f64, usize, String)> = None;
+    let mut best_overall: Option<(f64, f64, f64, usize, String)> = None;
 
     for chunk_count in 1..=max_chunks {
         let base_len = digits.len() / chunk_count;
@@ -2964,7 +4100,7 @@ fn heuristic_search_for_order(
         }
 
         let binary_cost = chunk_count - 1;
-        let mut best_for_chunks: Option<(f64, f64, usize, String)> = None;
+        let mut best_for_chunks: Option<(f64, f64, f64, usize, String)> = None;
         for candidate in current.candidates.iter().copied() {
             consider_existing_long_best(
                 &mut best_for_chunks,
@@ -2989,12 +4125,12 @@ fn heuristic_search_for_order(
             }
         }
 
-        if let Some((score, value, cost, expression)) = best_for_chunks {
-            let should_replace = best_overall.as_ref().map_or(true, |(old_score, _, old_cost, _)| {
+        if let Some((score, value, imag, cost, expression)) = best_for_chunks {
+            let should_replace = best_overall.as_ref().map_or(true, |(old_score, _, _, old_cost, _)| {
                 score < *old_score || (score == *old_score && cost < *old_cost)
             });
             if should_replace {
-                best_overall = Some((score, value, cost, expression));
+                best_overall = Some((score, value, imag, cost, expression));
             }
             if score <= tolerance {
                 break;
@@ -3051,7 +4187,7 @@ fn run_long_input_search(
         let mut handles = Vec::with_capacity(workers);
         for chunk in tasks.chunks(chunk_size) {
             handles.push(scope.spawn(move || {
-                let mut local_best: Option<(f64, f64, usize, String)> = None;
+                let mut local_best: Option<(f64, f64, f64, usize, String)> = None;
                 for (ordering, fold_from_right) in chunk {
                     if let Some(candidate) = heuristic_search_for_order(
                         ordering,
@@ -3061,15 +4197,15 @@ fn run_long_input_search(
                         candidate_limit,
                         *fold_from_right,
                     ) {
-                        let should_replace = local_best.as_ref().map_or(true, |(old_score, _, old_cost, _)| {
+                        let should_replace = local_best.as_ref().map_or(true, |(old_score, _, _, old_cost, _)| {
                             candidate.0 < *old_score
-                                || (candidate.0 == *old_score && candidate.2 < *old_cost)
+                                || (candidate.0 == *old_score && candidate.3 < *old_cost)
                         });
                         if should_replace {
                             local_best = Some(candidate);
                         }
                     }
-                    if local_best.as_ref().is_some_and(|(score, _, _, _)| *score <= tolerance) {
+                    if local_best.as_ref().is_some_and(|(score, _, _, _, _)| *score <= tolerance) {
                         break;
                     }
                 }
@@ -3082,11 +4218,11 @@ fn run_long_input_search(
             .collect::<Vec<_>>()
     });
 
-    let mut best: Option<(f64, f64, usize, String)> = None;
+    let mut best: Option<(f64, f64, f64, usize, String)> = None;
     for candidate in partial_results.into_iter().flatten() {
-        let should_replace = best.as_ref().map_or(true, |(old_score, _, old_cost, _)| {
+        let should_replace = best.as_ref().map_or(true, |(old_score, _, _, old_cost, _)| {
             candidate.0 < *old_score
-                || (candidate.0 == *old_score && candidate.2 < *old_cost)
+                || (candidate.0 == *old_score && candidate.3 < *old_cost)
         });
         if should_replace {
             best = Some(candidate);
@@ -3098,13 +4234,13 @@ fn run_long_input_search(
     );
     println!("Candidates per beam: {candidate_limit}; diverse magnitude buckets and alternate digit orders/folds enabled.");
     match best {
-        Some((score, value, cost, expression)) if score <= tolerance => {
+        Some((score, value, imag, cost, expression)) if score <= tolerance => {
             println!("Found a heuristic match using {cost} operation(s):");
-            println!("{expression} = {value:.15}");
+            println!("{expression} = {}", complex_display(value, imag));
         }
-        Some((score, value, cost, expression)) => {
+        Some((score, value, imag, cost, expression)) => {
             println!("No exact match found in the candidates explored.");
-            println!("Closest result ({cost} operations): {expression} = {value:.15} (difference: {score:.15})");
+            println!("Closest result ({cost} operations): {expression} = {} (difference: {score:.15})", complex_display(value, imag));
         }
         None => {
             println!("No valid expression survived the heuristic search.");
@@ -3130,6 +4266,9 @@ fn for_each_binary_pair_result(
     gamma_cache: &mut HashMap<u64, Option<f64>>,
     mut emit: impl FnMut(f64, ExprNode),
 ) {
+    if a.imag != 0.0 || b.imag != 0.0 {
+        return;
+    }
     let av = a.value;
     let bv = b.value;
     let ai = a.node_id;
@@ -3244,6 +4383,38 @@ fn for_each_binary_pair_result(
 }
 
 
+fn for_each_complex_binary_pair_result(
+    a: Candidate,
+    b: Candidate,
+    mut emit: impl FnMut(Complex, ComplexBinaryOp),
+) {
+    let left = Complex::new(a.value, a.imag);
+    let right = Complex::new(b.value, b.imag);
+    if left.im != 0.0 || right.im != 0.0 {
+        let add = Complex::new(left.re + right.re, left.im + right.im);
+        let sub = Complex::new(left.re - right.re, left.im - right.im);
+        let mul = Complex::new(
+            left.re * right.re - left.im * right.im,
+            left.re * right.im + left.im * right.re,
+        );
+        emit(add, ComplexBinaryOp::Add);
+        emit(sub, ComplexBinaryOp::Subtract);
+        emit(mul, ComplexBinaryOp::Multiply);
+        if let Some(value) = left.div(right) {
+            emit(value, ComplexBinaryOp::Divide);
+        }
+    }
+    if let Some(value) = left.pow(right) {
+        emit(value, ComplexBinaryOp::Power);
+    }
+    if let (Some(left_log), Some(right_log)) = (left.ln(), right.ln()) {
+        if let Some(value) = left_log.div(right_log) {
+            emit(value, ComplexBinaryOp::Logarithm);
+        }
+    }
+}
+
+
 struct MaskWork {
     mask: usize,
     full_mask: usize,
@@ -3297,8 +4468,35 @@ impl MaskWork {
     }
 
     #[inline]
+    fn insert_complex(&mut self, _cost: usize, value: Complex, node: ExprNode) {
+        if let Some(score) = insert_complex_into_cell_with_base(
+            &mut self.cells[0],
+            &mut self.nodes,
+            self.target,
+            value.re,
+            value.im,
+            node,
+            self.node_base,
+        ) {
+            if self.mask == self.full_mask && score <= self.tolerance {
+                self.found_solution = true;
+            }
+        }
+    }
+
+    #[inline]
     fn unary(&mut self, cost: usize, value: f64, child: usize, op: UnaryOp) {
         self.insert(cost, value, ExprNode::Unary(op, child));
+    }
+
+    #[inline]
+    fn complex_unary(&mut self, cost: usize, value: Complex, child: usize, op: ComplexUnaryOp) {
+        self.insert_complex(cost, value, ExprNode::ComplexUnary(op, child));
+    }
+
+    #[inline]
+    fn complex_binary(&mut self, cost: usize, value: Complex, left: usize, right: usize, op: ComplexBinaryOp) {
+        self.insert_complex(cost, value, ExprNode::ComplexBinary(op, left, right));
     }
 
     #[inline]
@@ -3329,6 +4527,25 @@ impl MaskWork {
             cost,
             value,
             ExprNode::Quaternary(op, first, second, third, fourth),
+        );
+    }
+
+    #[inline]
+    fn quinary(
+        &mut self,
+        cost: usize,
+        value: f64,
+        first: usize,
+        second: usize,
+        third: usize,
+        fourth: usize,
+        fifth: usize,
+        op: QuinaryOp,
+    ) {
+        self.insert(
+            cost,
+            value,
+            ExprNode::Quinary(op, first, second, third, fourth, fifth),
         );
     }
 }
@@ -3433,6 +4650,18 @@ fn remap_expr_node(node: ExprNode, old_base: usize, new_base: usize) -> ExprNode
             remap(third, old_base, new_base),
             remap(fourth, old_base, new_base),
         ),
+        ExprNode::Quinary(op, first, second, third, fourth, fifth) => ExprNode::Quinary(
+            op,
+            remap(first, old_base, new_base),
+            remap(second, old_base, new_base),
+            remap(third, old_base, new_base),
+            remap(fourth, old_base, new_base),
+            remap(fifth, old_base, new_base),
+        ),
+        ExprNode::ComplexUnary(op, child) => ExprNode::ComplexUnary(op, remap(child, old_base, new_base)),
+        ExprNode::ComplexBinary(op, left, right) => ExprNode::ComplexBinary(
+            op, remap(left, old_base, new_base), remap(right, old_base, new_base)
+        ),
     }
 }
 
@@ -3507,6 +4736,9 @@ fn process_binary_partitions(
                             gamma_cache,
                             |value, node| work.insert(cost, value, node),
                         );
+                        for_each_complex_binary_pair_result(a, b, |value, op| {
+                            work.complex_binary(cost, value, a.node_id, b.node_id, op);
+                        });
                         if work.found_solution {
                             return;
                         }
@@ -3549,6 +4781,9 @@ fn process_binary_partitions(
                             gamma_cache,
                             |value, node| work.insert(cost, value, node),
                         );
+                        for_each_complex_binary_pair_result(a, b, |value, op| {
+                            work.complex_binary(cost, value, a.node_id, b.node_id, op);
+                        });
                         if work.found_solution {
                             return;
                         }
@@ -3595,6 +4830,15 @@ fn process_binary_partitions(
                                         );
                                     },
                                 );
+                                for_each_complex_binary_pair_result(a, b, |value, op| {
+                                    insert_complex_into_cell(
+                                        &mut local_cell,
+                                        &mut local_nodes,
+                                        target,
+                                        value,
+                                        ExprNode::ComplexBinary(op, a.node_id, b.node_id),
+                                    );
+                                });
                             }
                         }
                     }
@@ -3612,7 +4856,7 @@ fn process_binary_partitions(
     for (local_cell, local_nodes) in partials {
         for candidate in local_cell.candidates {
             let node = local_nodes[candidate.node_id];
-            work.insert(cost, candidate.value, node);
+            work.insert_complex(cost, Complex::new(candidate.value, candidate.imag), node);
         }
     }
 }
@@ -3654,6 +4898,14 @@ fn process_mask_cost(
         for candidate in previous_values.iter().copied() {
             let value = candidate.value;
             let child = candidate.node_id;
+            let complex_value = Complex::new(candidate.value, candidate.imag);
+
+            for_each_complex_unary_result(complex_value, |result, op| {
+                work.complex_unary(cost, result, child, op);
+            });
+            if candidate.imag != 0.0 {
+                continue;
+            }
 
             work.unary(cost, value.cbrt(), child, UnaryOp::Cbrt);
             work.unary(cost, value.ceil(), child, UnaryOp::Ceil);
@@ -3891,6 +5143,9 @@ fn process_mask_cost(
                                 for a in first_values.iter().copied().flatten() {
                                     for b in second_values.iter().copied().flatten() {
                                         for c in third_values.iter().copied().flatten() {
+                                            if a.imag != 0.0 || b.imag != 0.0 || c.imag != 0.0 {
+                                                continue;
+                                            }
                                             let av = a.value;
                                             let bv = b.value;
                                             let cv = c.value;
@@ -3908,6 +5163,43 @@ fn process_mask_cost(
                                             if let Some(v) = binomial_cdf_value(av, bv, cv) {
                                                 work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::BinomialCdf);
                                             }
+                                            let fma = av.mul_add(bv, cv);
+                                            work.ternary(cost, fma, a.node_id, b.node_id, c.node_id, TernaryOp::Fma);
+                                            work.ternary(cost, fma, a.node_id, b.node_id, c.node_id, TernaryOp::MulAdd);
+                                            let mut triple = [av, bv, cv];
+                                            triple.sort_by(f64::total_cmp);
+                                            work.ternary(cost, triple[1], a.node_id, b.node_id, c.node_id, TernaryOp::Median3);
+                                            work.ternary(cost, av.hypot(bv).hypot(cv), a.node_id, b.node_id, c.node_id, TernaryOp::Hypot3);
+                                            if av != bv {
+                                                work.ternary(cost, (cv - av) / (bv - av), a.node_id, b.node_id, c.node_id, TernaryOp::InverseLerp);
+                                            }
+                                            work.ternary(cost, if cv >= av.min(bv) && cv <= av.max(bv) { 1.0 } else { 0.0 }, a.node_id, b.node_id, c.node_id, TernaryOp::IsBetween);
+                                            if let Some(v) = binomial_pmf_value(av, bv, cv) {
+                                                work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::BinomialPmf);
+                                            }
+                                            if let Some(v) = regularized_beta_value(av, bv, cv) {
+                                                work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::RegularizedBeta);
+                                                if let Some(beta) = beta_value(bv, cv) {
+                                                    work.ternary(cost, v * beta, a.node_id, b.node_id, c.node_id, TernaryOp::BetaInc);
+                                                }
+                                            }
+                                            if let (Some(ai), Some(bi), Some(mi)) = (integer_argument(av), integer_argument(bv), integer_argument(cv)) {
+                                                if mi > 0 {
+                                                    let m = mi as i128;
+                                                    work.ternary(cost, (ai as i128 + bi as i128).rem_euclid(m) as f64, a.node_id, b.node_id, c.node_id, TernaryOp::ModularAdd);
+                                                    work.ternary(cost, (ai as i128 - bi as i128).rem_euclid(m) as f64, a.node_id, b.node_id, c.node_id, TernaryOp::ModularSub);
+                                                    work.ternary(cost, ((ai as i128 * bi as i128).rem_euclid(m)) as f64, a.node_id, b.node_id, c.node_id, TernaryOp::ModularMul);
+                                                }
+                                            }
+                                            if let Some(v) = multinomial_value(av, bv, cv) {
+                                                work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::Multinomial);
+                                            }
+                                            if let Some(v) = gamma_pdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::GammaPdf); }
+                                            if let Some(v) = gamma_cdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::GammaCdf); }
+                                            if let Some(v) = beta_pdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::BetaPdf); }
+                                            if let Some(v) = beta_cdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::BetaCdf); }
+                                            if let Some(v) = uniform_pdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::UniformPdf); }
+                                            if let Some(v) = uniform_cdf_value(av, bv, cv) { work.ternary(cost, v, a.node_id, b.node_id, c.node_id, TernaryOp::UniformCdf); }
                                             if work.found_solution { return work; }
                                         }
                                         if work.found_solution { return work; }
@@ -3946,9 +5238,17 @@ fn process_mask_cost(
                                             for b in bvs.iter().copied().flatten() {
                                                 for c in cvs.iter().copied().flatten() {
                                                     for d in dvs.iter().copied().flatten() {
+                                                        if a.imag != 0.0 || b.imag != 0.0 || c.imag != 0.0 || d.imag != 0.0 {
+                                                            continue;
+                                                        }
                                                         if let Some(v) = chinese_remainder_value(a.value, b.value, c.value, d.value) {
                                                             work.quaternary(cost, v, a.node_id, b.node_id, c.node_id, d.node_id, QuaternaryOp::ChineseRemainder);
                                                         }
+                                                        let midpoint = (a.value + b.value + c.value + d.value) / 4.0;
+                                                        work.quaternary(cost, midpoint, a.node_id, b.node_id, c.node_id, d.node_id, QuaternaryOp::Bilinear);
+                                                        work.quaternary(cost, midpoint, a.node_id, b.node_id, c.node_id, d.node_id, QuaternaryOp::Multilinear);
+                                                        let cubic_midpoint = (-a.value + 9.0 * b.value + 9.0 * c.value - d.value) / 16.0;
+                                                        work.quaternary(cost, cubic_midpoint, a.node_id, b.node_id, c.node_id, d.node_id, QuaternaryOp::CubicInterp);
                                                         if work.found_solution { return work; }
                                                     }
                                                     if work.found_solution { return work; }
@@ -3969,11 +5269,58 @@ fn process_mask_cost(
             }
         }
 
+        if mask == full_mask && (5..=8).contains(&digit_count) && cost == 1 {
+            let mut first_mask = (mask - 1) & mask;
+            while first_mask != 0 {
+                let remainder1 = mask ^ first_mask;
+                let mut second_mask = (remainder1 - 1) & remainder1;
+                while second_mask != 0 {
+                    let remainder2 = remainder1 ^ second_mask;
+                    let mut third_mask = (remainder2 - 1) & remainder2;
+                    while third_mask != 0 {
+                        let remainder3 = remainder2 ^ third_mask;
+                        let mut fourth_mask = (remainder3 - 1) & remainder3;
+                        while fourth_mask != 0 {
+                            let fifth_mask = remainder3 ^ fourth_mask;
+                            if fifth_mask != 0 {
+                                let first_values = best_candidates::<2>(&dp[first_mask][0]);
+                                let second_values = best_candidates::<2>(&dp[second_mask][0]);
+                                let third_values = best_candidates::<2>(&dp[third_mask][0]);
+                                let fourth_values = best_candidates::<2>(&dp[fourth_mask][0]);
+                                let fifth_values = best_candidates::<2>(&dp[fifth_mask][0]);
+                                for a in first_values.iter().copied().flatten() {
+                                    for b in second_values.iter().copied().flatten() {
+                                        for c in third_values.iter().copied().flatten() {
+                                            for d in fourth_values.iter().copied().flatten() {
+                                                for e in fifth_values.iter().copied().flatten() {
+                                                    if a.imag != 0.0 || b.imag != 0.0 || c.imag != 0.0 || d.imag != 0.0 || e.imag != 0.0 {
+                                                        continue;
+                                                    }
+                                                    if let Some(v) = remap_value(a.value, b.value, c.value, d.value, e.value) {
+                                                        work.quinary(cost, v, a.node_id, b.node_id, c.node_id, d.node_id, e.node_id, QuinaryOp::Remap);
+                                                    }
+                                                    if work.found_solution { return work; }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            fourth_mask = (fourth_mask - 1) & remainder3;
+                        }
+                        third_mask = (third_mask - 1) & remainder2;
+                    }
+                    second_mask = (second_mask - 1) & remainder1;
+                }
+                first_mask = (first_mask - 1) & mask;
+            }
+        }
+
         if mask == full_mask
             && work.cells[0]
                 .candidates
                 .iter()
-                .any(|candidate| (candidate.value - target).abs() <= tolerance)
+                .any(|candidate| candidate.score <= tolerance)
         {
             return work;
         }
@@ -4165,7 +5512,7 @@ fn main() {
     let target = match read_line("Target number: ").and_then(|s| s.parse::<f64>().ok()) {
         Some(value) if value.is_finite() && value.abs() <= MAX_ABS_VALUE => value,
         _ => {
-            println!("Enter a finite target with absolute value at most {MAX_ABS_VALUE}.");
+            println!("Enter a finite real target with absolute value at most {MAX_ABS_VALUE}.");
             return;
         }
     };
@@ -4230,7 +5577,7 @@ fn main() {
         let found_at_this_cost = search.dp[full_mask][cost]
             .candidates
             .iter()
-            .any(|candidate| (candidate.value - target).abs() <= tolerance);
+            .any(|candidate| candidate.score <= tolerance);
         if found_at_this_cost {
             search.found_solution = true;
             break;
@@ -4243,7 +5590,7 @@ fn main() {
             .candidates
             .iter()
             .copied()
-            .filter(|c| (c.value - target).abs() <= tolerance)
+            .filter(|c| c.score <= tolerance)
             .take(10)
             .collect();
 
@@ -4252,10 +5599,10 @@ fn main() {
             println!("Configured relative tolerance: {EXACT_TOLERANCE:.3e} (absolute bound: {tolerance:.15})");
             for candidate in matches {
                 println!(
-                    "{} = {:.15} (absolute error: {:.15})",
+                    "{} = {} (absolute error: {:.15})",
                     render_expr(candidate.node_id, &search.nodes, &digits),
-                    candidate.value,
-                    (candidate.value - target).abs(),
+                    complex_display(candidate.value, candidate.imag),
+                    candidate.score,
                 );
             }
             return;
@@ -4275,11 +5622,11 @@ fn main() {
 
     if let Some((candidate, cost)) = best {
         println!(
-            "Closest result ({} operations): {} = {:.15} (difference: {:.15})",
+            "Closest result ({} operations): {} = {} (difference: {:.15})",
             cost,
             render_expr(candidate.node_id, &search.nodes, &digits),
-            candidate.value,
-            (candidate.value - target).abs()
+            complex_display(candidate.value, candidate.imag),
+            candidate.score
         );
     }
 }
