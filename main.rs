@@ -11,7 +11,6 @@ const DEFAULT_CANDIDATES_PER_CELL: usize = 24;
 const MAX_CANDIDATES_PER_CELL: usize = 2000;
 const MAX_ABS_VALUE: f64 = 1.0e12;
 const MAX_INTEGER_ARGUMENT: f64 = 1.0e12;
-const EXACT_TOLERANCE: f64 = 1.0e-9;
 
 #[derive(Clone, Copy)]
 enum UnaryOp {
@@ -770,7 +769,7 @@ struct Search {
     dp: Vec<Vec<Cell>>,
     nodes: Vec<ExprNode>,
     target: f64,
-    tolerance: f64,
+    exact_threshold: f64,
     full_mask: usize,
     found_solution: bool,
 }
@@ -780,7 +779,7 @@ impl Search {
         size: usize,
         _depth: usize,
         target: f64,
-        tolerance: f64,
+        exact_threshold: f64,
         full_mask: usize,
         candidate_limit: usize,
     ) -> Self {
@@ -790,7 +789,7 @@ impl Search {
             dp,
             nodes: Vec::with_capacity(node_capacity),
             target,
-            tolerance,
+            exact_threshold,
             full_mask,
             found_solution: false,
         }
@@ -3061,7 +3060,7 @@ fn unary_name(op: UnaryOp) -> &'static str {
         UnaryOp::Hyperfactorial => "hyperfactorial",
         UnaryOp::BitNot => "bit_not",
         UnaryOp::CountOnes => "count_ones",
-        UnaryOp::CountZeros => "count_zeros",
+        UnaryOp::CountZeros => "count_zero_bits",
         UnaryOp::LeadingZeros => "leading_zeros",
         UnaryOp::TrailingZeros => "trailing_zeros",
         UnaryOp::ReverseBits => "reverse_bits",
@@ -4017,7 +4016,7 @@ fn cached_added_binary_results(a: f64, b: f64) -> CachedBinaryResults {
 fn heuristic_search_for_order(
     digits: &[u8],
     target: f64,
-    tolerance: f64,
+    exact_threshold: f64,
     depth: usize,
     candidate_limit: usize,
     fold_from_right: bool,
@@ -4132,7 +4131,7 @@ fn heuristic_search_for_order(
             if should_replace {
                 best_overall = Some((score, value, imag, cost, expression));
             }
-            if score <= tolerance {
+            if score == exact_threshold {
                 break;
             }
         }
@@ -4144,7 +4143,7 @@ fn heuristic_search_for_order(
 fn run_long_input_search(
     digits: &[u8],
     target: f64,
-    tolerance: f64,
+    exact_threshold: f64,
     depth: usize,
     candidate_limit: usize,
     worker_count: usize,
@@ -4192,7 +4191,7 @@ fn run_long_input_search(
                     if let Some(candidate) = heuristic_search_for_order(
                         ordering,
                         target,
-                        tolerance,
+                        exact_threshold,
                         depth,
                         candidate_limit,
                         *fold_from_right,
@@ -4205,7 +4204,7 @@ fn run_long_input_search(
                             local_best = Some(candidate);
                         }
                     }
-                    if local_best.as_ref().is_some_and(|(score, _, _, _, _)| *score <= tolerance) {
+                    if local_best.as_ref().is_some_and(|(score, _, _, _, _)| *score == exact_threshold) {
                         break;
                     }
                 }
@@ -4234,8 +4233,8 @@ fn run_long_input_search(
     );
     println!("Candidates per beam: {candidate_limit}; diverse magnitude buckets and alternate digit orders/folds enabled.");
     match best {
-        Some((score, value, imag, cost, expression)) if score <= tolerance => {
-            println!("Found a heuristic match using {cost} operation(s):");
+        Some((score, value, imag, cost, expression)) if score == exact_threshold => {
+            println!("Found an exact heuristic match using {cost} operation(s):");
             println!("{expression} = {}", complex_display(value, imag));
         }
         Some((score, value, imag, cost, expression)) => {
@@ -4421,7 +4420,7 @@ struct MaskWork {
     cost: usize,
     node_base: usize,
     target: f64,
-    tolerance: f64,
+    exact_threshold: f64,
     cells: Vec<Cell>,
     nodes: Vec<ExprNode>,
     found_solution: bool,
@@ -4433,7 +4432,7 @@ impl MaskWork {
         full_mask: usize,
         cost: usize,
         target: f64,
-        tolerance: f64,
+        exact_threshold: f64,
         candidate_limit: usize,
         node_base: usize,
     ) -> Self {
@@ -4444,7 +4443,7 @@ impl MaskWork {
             cost,
             node_base,
             target,
-            tolerance,
+            exact_threshold,
             cells: vec![Cell::new(limit)],
             nodes: Vec::with_capacity(limit),
             found_solution: false,
@@ -4461,7 +4460,7 @@ impl MaskWork {
             node,
             self.node_base,
         ) {
-            if self.mask == self.full_mask && score <= self.tolerance {
+            if self.mask == self.full_mask && score == self.exact_threshold {
                 self.found_solution = true;
             }
         }
@@ -4478,7 +4477,7 @@ impl MaskWork {
             node,
             self.node_base,
         ) {
-            if self.mask == self.full_mask && score <= self.tolerance {
+            if self.mask == self.full_mask && score == self.exact_threshold {
                 self.found_solution = true;
             }
         }
@@ -4868,7 +4867,7 @@ fn process_mask_cost(
     cost: usize,
     binary_partitions: &[(usize, usize)],
     target: f64,
-    tolerance: f64,
+    exact_threshold: f64,
     candidate_limit: usize,
     full_mask: usize,
     node_base: usize,
@@ -4882,7 +4881,7 @@ fn process_mask_cost(
         full_mask,
         cost,
         target,
-        tolerance,
+        exact_threshold,
         candidate_limit,
         node_base,
     );
@@ -5320,7 +5319,7 @@ fn process_mask_cost(
             && work.cells[0]
                 .candidates
                 .iter()
-                .any(|candidate| candidate.score <= tolerance)
+                .any(|candidate| candidate.score == exact_threshold)
         {
             return work;
         }
@@ -5343,7 +5342,7 @@ fn process_cost_wave(
 
     let node_base = search.nodes.len();
     let target = search.target;
-    let tolerance = search.tolerance;
+    let exact_threshold = search.exact_threshold;
     let workers = worker_count.min(full_mask.saturating_sub(1).max(1)).max(1);
     let partition_progress = AtomicUsize::new(0);
     let non_full_count = full_mask.saturating_sub(1);
@@ -5365,7 +5364,7 @@ fn process_cost_wave(
                 cost,
                 &binary_partitions_by_mask[mask],
                 target,
-                tolerance,
+                exact_threshold,
                 candidate_limit,
                 full_mask,
                 node_base,
@@ -5403,7 +5402,7 @@ fn process_cost_wave(
                             cost,
                             &partitions_ref[mask],
                             target,
-                            tolerance,
+                            exact_threshold,
                             candidate_limit,
                             full_mask,
                             node_base,
@@ -5456,7 +5455,7 @@ fn process_cost_wave(
         cost,
         &binary_partitions_by_mask[full_mask],
         target,
-        tolerance,
+        exact_threshold,
         candidate_limit,
         full_mask,
         node_base,
@@ -5527,7 +5526,7 @@ fn main() {
         }
     };
 
-    let tolerance = EXACT_TOLERANCE * target.abs().max(1.0);
+    let exact_threshold = 0.0;
 
     let candidate_limit = std::env::var("MATHBRUTE_CANDIDATES")
         .ok()
@@ -5539,13 +5538,13 @@ fn main() {
     eprintln!("Parallel workers: {worker_count}");
 
     if digits.len() > MAX_EXACT_DIGITS {
-        run_long_input_search(&digits, target, tolerance, depth, candidate_limit, worker_count);
+        run_long_input_search(&digits, target, exact_threshold, depth, candidate_limit, worker_count);
         return;
     }
 
     let size = 1usize << digits.len();
     let full_mask = size - 1;
-    let mut search = Search::new(size, depth, target, tolerance, full_mask, candidate_limit);
+    let mut search = Search::new(size, depth, target, exact_threshold, full_mask, candidate_limit);
     let binary_partitions_by_mask: Vec<Vec<(usize, usize)>> = (0..size)
         .map(|mask| {
             if mask.count_ones() >= 2 {
@@ -5577,7 +5576,7 @@ fn main() {
         let found_at_this_cost = search.dp[full_mask][cost]
             .candidates
             .iter()
-            .any(|candidate| candidate.score <= tolerance);
+            .any(|candidate| candidate.score == exact_threshold);
         if found_at_this_cost {
             search.found_solution = true;
             break;
@@ -5590,19 +5589,17 @@ fn main() {
             .candidates
             .iter()
             .copied()
-            .filter(|c| c.score <= tolerance)
+            .filter(|c| c.score == exact_threshold)
             .take(10)
             .collect();
 
         if !matches.is_empty() {
-            println!("Found {} candidate(s) within tolerance using {cost} operation(s):", matches.len());
-            println!("Configured relative tolerance: {EXACT_TOLERANCE:.3e} (absolute bound: {tolerance:.15})");
+            println!("Found {} exact candidate(s) using {cost} operation(s):", matches.len());
             for candidate in matches {
                 println!(
-                    "{} = {} (absolute error: {:.15})",
+                    "{} = {}",
                     render_expr(candidate.node_id, &search.nodes, &digits),
                     complex_display(candidate.value, candidate.imag),
-                    candidate.score,
                 );
             }
             return;
